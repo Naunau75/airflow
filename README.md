@@ -1,116 +1,85 @@
-# 🚀 Data Pipeline: Airflow, dbt & BigQuery
+# 🚀 Data Pipeline: Airflow, dbt & BigQuery (Kubernetes)
 
-Ce projet implémente un pipeline de données complet (ETL/ELT) orchestré par Apache Airflow, intégrant l'ingestion de données, la transformation via dbt, et le feature engineering avancé avec Python/Pandas sur Google Cloud Platform (BigQuery).
+Ce projet implémente un pipeline de données complet (ETL/ELT) orchestré par Apache Airflow, s'exécutant sur **Kubernetes**. Il intègre l'ingestion de données, la transformation via dbt, et le feature engineering avancé avec Python/Pandas sur Google Cloud Platform.
 
 ## 📋 Architecture du Pipeline
 
-Le flux de données se décompose en 3 étapes principales, orchestrées séquentiellement :
+L'architecture repose sur la contenearisation de chaque tâche. Le DAG Airflow orchestre des **Pods Kubernetes** éphémères :
 
 1.  **Extraction (EL)** :
-    *   Script : `scripts/extract.py`
-    *   Action : Récupère les données utilisateurs depuis une API (JSONPlaceholder).
-    *   Destination : Charge les données brutes dans BigQuery (`raw_data.users_raw`).
+    *   **Pod** : `extract-job`
+    *   **Action** : Récupère les données API et charge les brutes dans BigQuery (`raw_data.users_raw`).
 
 2.  **Transformation (T - dbt)** :
-    *   Outil : dbt (data build tool)
-    *   Action : Nettoyage, typage et standardisation des données.
-    *   Modèle : `stg_users` (staging).
-    *   Sortie : Table propre dans BigQuery (`dbt_staging.stg_users`).
+    *   **Pod** : `dbt-job`
+    *   **Action** : Exécute `dbt run` pour nettoyer et typer les données (`stg_users`).
 
 3.  **Engineering (T - Python)** :
-    *   Script : `scripts/transform.py`
-    *   Action : Logique métier complexe (ex: scoring utilisateurs) difficile à implémenter en SQL pur.
-    *   Sortie : Table analytique finale (`analytics.users_scored`).
+    *   **Pod** : `transform-job`
+    *   **Action** : Logique métier complexe en Python (`analytics.users_scored`).
 
 ---
 
 ## 🛠 Prérequis
 
-*   **Python** (>= 3.12)
-*   **uv** (Gestionnaire de paquets rapide)
-*   **Compte Google Cloud Platform (GCP)** avec BigQuery activé.
-*   **Service Account GCP** avec les droits BigQuery (Admin ou Data Editor).
+*   **Cluster Kubernetes** (GKE ou local via Minikube/Docker Desktop).
+*   **Airflow** déployé sur Kubernetes (ou configuré avec accès au cluster).
+*   **Artifact Registry** (GCP) pour stocker l'image Docker.
+*   **Service Account GCP** avec les droits BigQuery.
 
-## ⚙️ Installation
+## ⚙️ Installation & Déploiement
 
-1.  **Cloner le dépôt** :
+Le déploiement repose sur une image Docker unique contenant tous les scripts et dépendances.
+
+1.  **Build de l'image Docker** :
     ```bash
-    git clone <votre-repo-url>
-    cd airflow-projet
+    # En local (pour test)
+    docker build -t ma-pipeline-image:latest .
     ```
 
-2.  **Installer les dépendances** avec `uv` :
-    ```bash
-    uv sync
+2.  **Configuration du DAG** :
+    Modifiez `dags/pipeline_dag.py` pour pointer vers votre image Docker sur Artifact Registry :
+    ```python
+    image="europe-west1-docker.pkg.dev/mon-projet/mon-repo/mon-image:latest"
     ```
-
-3.  **Configuration dbt** :
-    Assurez-vous que votre fichier `profiles.yml` est correctement configuré pour pointer vers votre projet GCP.
 
 ## 🚀 Utilisation
 
-### Configuration de l'environnement
+### Orchestration avec Airflow (Production)
 
-Créez un fichier `.env` ou exportez la variable d'environnement nécessaire :
+Le DAG `my_complete_pipeline` utilise `KubernetesPodOperator`.
+*   Chaque tâche démarre un conteneur isolé.
+*   Les logs sont remontés dans l'interface Airflow.
+*   Les ressources (CPU/RAM) sont libérées après chaque tâche.
 
+### Exécution Manuelle (Développement)
+
+Vous pouvez toujours exécuter les scripts manuellement en local via `uv` pour le debug :
 ```bash
-export GCP_PROJECT_ID="votre-projet-gcp-id"
+uv run python scripts/extract.py
+# etc...
 ```
-
-Pour l'authentification locale, utilisez le SDK Google Cloud :
-```bash
-gcloud auth application-default login
-```
-
-### Exécution Manuelle (Pas à pas)
-
-Vous pouvez tester chaque brique individuellement via `uv` :
-
-1.  **Extraction** :
-    ```bash
-    uv run python ../scripts/extract.py
-    ```
-
-2.  **Transformation dbt** :
-    ```bash
-    cd ../dbt_project
-    uv run dbt run
-    ```
-
-3.  **Transformation Python** :
-    ```bash
-    uv run python ../scripts/transform.py
-    ```
-
-### Orchestration avec Airflow
-
-Le DAG est défini dans `dags/pipeline_dag.py`.
-*   Assurez-vous qu'Airflow est configuré pour scanner le dossier `dags`.
-*   Le DAG `my_complete_pipeline` s'exécutera quotidiennement.
 
 ---
 
-## ✅ CI/CD
+## ✅ CI/CD (GitHub Actions)
 
-Le projet inclut un workflow GitHub Actions (`.github/workflows/ci.yml`) qui :
-*   Installe les dépendances avec `uv`.
-*   Vérifie la qualité du code (Linting).
-*   Teste la connexion dbt (`dbt debug`) à chaque Push/PR sur la branche `main`.
+Le workflow `.github/workflows/ci.yml` automatise la livraison continue :
+1.  Authentification à GCP (via Workload Identity).
+2.  Configuration de Docker.
+3.  **Build** de l'image Docker.
+4.  **Push** de l'image vers Google Artifact Registry à chaque merge sur `main`.
 
 ## 📂 Structure du Projet
 
 ```
 .
-├── airflow_projet/      # Configuration Python & CI
-│   ├── pyproject.toml   # Dépendances du projet
-│   ├── .github/         # Workflows CI/CD
+├── Dockerfile           # Définition de l'image conteneur
+├── airflow_projet/      # Méta-données Python
+│   ├── pyproject.toml   # Dépendances (gérées par uv)
+│   ├── .github/         # Workflow Build & Push
 │   └── README.md        # Documentation
-├── dags/                # DAGs Airflow
-│   └── pipeline_dag.py  # Définition du pipeline
+├── dags/                # DAGs Airflow (KubernetesPodOperator)
 ├── dbt_project/         # Projet dbt
-│   ├── models/          # Modèles SQL
-│   └── profiles.yml     # Configuration connexion BQ
 └── scripts/             # Scripts Python ETL
-    ├── extract.py       # Ingestion API -> BQ
-    └── transform.py     # Logique métier Python
 ```
