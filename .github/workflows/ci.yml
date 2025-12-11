@@ -14,29 +14,35 @@ jobs:
       # Nécessite d'ajouter une clé JSON de Service Account dans les secrets GitHub
       GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp_key.json
 
+    permissions:
+      contents: "read"
+      id-token: "write" # Nécessaire pour l'authentification Workload Identity
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Authenticate to Google Cloud
-        run: |
-          echo "${{ secrets.GCP_SA_KEY }}" > /tmp/gcp_key.json
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: google-github-actions/auth@v2
         with:
-          version: "latest"
+          # Il est recommandé d'utiliser Workload Identity Federation ici plutôt qu'une clé json
+          # Remplacer par vos secrets
+          credentials_json: "${{ secrets.GCP_SA_KEY }}"
 
-      - name: Install Python & Dependencies
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCP
+        run: gcloud auth configure-docker europe-west1-docker.pkg.dev
+
+      - name: Build and Push Docker Image
+        env:
+          IMAGE_NAME: europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/mon-repo/mon-image
+          SHA: ${{ github.sha }}
         run: |
-          uv python install
-          uv sync
+          # Build de l'image avec le tag "latest" et le SHA du commit
+          docker build -t $IMAGE_NAME:$SHA -t $IMAGE_NAME:latest .
 
-      - name: Lint Python Scripts
-        # Tu peux ajouter ruff ou pylint dans tes dépendances
-        run: uv run python -m compileall scripts/
-
-      - name: dbt Debug (Test Connection)
-        run: |
-          cd dbt_project
-          uv run dbt debug --profiles-dir .
+          # Push vers Artifact Registry
+          docker push $IMAGE_NAME:latest
+          docker push $IMAGE_NAME:$SHA
