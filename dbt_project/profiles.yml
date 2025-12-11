@@ -1,0 +1,9 @@
+my_dbt_project:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      dataset: "dbt_staging" # Dataset pour les tables clean
+      threads: 4
